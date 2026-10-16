@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Azure SignalR .NET Lab</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 750px; margin: 30px auto; padding: 0 15px; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 15px; margin-bottom: 15px; background: #fafafa; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; color: white; background: #dc3545; }
+    .badge.connected { background: #28a745; }
+    .row { display: flex; gap: 8px; margin-top: 8px; }
+    input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; flex: 1; }
+    button { padding: 8px 14px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:disabled { background: #b0c4de; cursor: not-allowed; }
+    #logBox { height: 260px; overflow-y: auto; border: 1px solid #ccc; background: white; padding: 10px; border-radius: 4px; list-style: none; font-family: monospace; font-size: 13px; }
+    #logBox li { margin-bottom: 4px; }
+    .msg-broadcast { color: #0056b3; }
+    .msg-group { color: #6f42c1; }
+    .msg-system { color: #d9534f; }
+  </style>
+</head>
+<body>
+  <h2>Azure SignalR Service Lab (.NET 8/9 & Default Mode)</h2>
+
+  <div class="card">
+    <strong>Status:</strong> <span id="statusBadge" class="badge">Disconnected</span>
+  </div>
+
+  <div class="card">
+    <strong>1. Identity & Connect</strong>
+    <div class="row">
+      <input type="text" id="usernameInput" placeholder="User Name" value="DotNetArchitect" />
+      <button id="connectBtn" onclick="connect()">Connect</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>2. Room / Group</strong>
+    <div class="row">
+      <input type="text" id="roomInput" placeholder="Room name (e.g. azure-core)" value="azure-core" />
+      <button id="joinBtn" onclick="joinRoom()" disabled>Join Room</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>3. Messaging (RPC Invocations)</strong>
+    <div class="row">
+      <input type="text" id="msgInput" placeholder="Type a message payload..." />
+      <button id="broadcastBtn" onclick="sendBroadcast()" disabled>Broadcast All</button>
+      <button id="roomBtn" onclick="sendToRoom()" disabled>Send to Room</button>
+    </div>
+  </div>
+
+  <h4>Live Stream Events</h4>
+  <ul id="logBox"></ul>
+
+  <script>
+    let connection = null;
+
+    const statusBadge = document.getElementById('statusBadge');
+    const logBox = document.getElementById('logBox');
+    const connectBtn = document.getElementById('connectBtn');
+    const joinBtn = document.getElementById('joinBtn');
+    const broadcastBtn = document.getElementById('broadcastBtn');
+    const roomBtn = document.getElementById('roomBtn');
+
+    function log(text, cls = '') {
+      const li = document.createElement('li');
+      li.className = cls;
+      li.textContent = text;
+      logBox.appendChild(li);
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    async function connect() {
+      connectBtn.disabled = true;
+      log('Negotiating connection via ASP.NET Core endpoint (/chatHub)...');
+
+      // In Default Mode, point straight to your ASP.NET Core Hub route.
+      // The SDK auto-calls /chatHub/negotiate, receives the redirect, and switches to Azure SignalR.
+      connection = new signalR.HubConnectionBuilder()
+        .withUrl('/chatHub')
+        .withAutomaticReconnect()
+        .configureLogging(signalR.LogLevel.Information)
+        .build();
+
+      connection.on('ReceiveMessage', (data) => {
+        let cls = 'msg-broadcast';
+        if (data.type === 'group') cls = 'msg-group';
+        if (data.type === 'system') cls = 'msg-system';
+        const prefix = data.roomName ? `[${data.roomName}] ` : '';
+        log(`[${data.timestamp}] ${prefix}${data.user}: ${data.message}`, cls);
+      });
+
+      connection.onreconnected(() => {
+        statusBadge.className = 'badge connected';
+        statusBadge.textContent = 'Connected';
+        log('Reconnected to Azure SignalR.', 'msg-system');
+      });
+
+      try {
+        await connection.start();
+        statusBadge.className = 'badge connected';
+        statusBadge.textContent = 'Connected';
+        log('Direct connection to Azure SignalR verified!', 'msg-system');
+
+        joinBtn.disabled = false;
+        broadcastBtn.disabled = false;
+        roomBtn.disabled = false;
+      } catch (err) {
+        log(`Connection failed: ${err.toString()}`, 'msg-system');
+        connectBtn.disabled = false;
+      }
+    }
+
+    async function sendBroadcast() {
+      const user = document.getElementById('usernameInput').value;
+      const msg = document.getElementById('msgInput').value;
+      if (!msg) return;
+
+      // Direct RPC invocation back to ChatHub.SendBroadcast
+      await connection.invoke('SendBroadcast', user, msg);
+      document.getElementById('msgInput').value = '';
+    }
+
+    async function joinRoom() {
+      const room = document.getElementById('roomInput').value.trim();
+      if (!room) return;
+
+      // Direct RPC invocation to ChatHub.JoinRoom
+      await connection.invoke('JoinRoom', room);
+      log(`Subscribed to room "${room}".`, 'msg-system');
+    }
+
+    async function sendToRoom() {
+      const room = document.getElementById('roomInput').value.trim();
+      const user = document.getElementById('usernameInput').value;
+      const msg = document.getElementById('msgInput').value;
+      if (!room || !msg) return;
+
+      // Direct RPC invocation to ChatHub.SendToRoom
+      await connection.invoke('SendToRoom', room, user, msg);
+      document.getElementById('msgInput').value = '';
+    }
+  </script>
+</body>
+</html>
